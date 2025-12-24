@@ -113,6 +113,10 @@ python3 -c "import pysoem; print('pysoem version:', pysoem.__version__)"
    Or if using conda environment:
    ```bash
    sudo /home/zeroerr/anaconda3/bin/python pysoem_tset.py
+
+   or run ：
+   sudo /home/zeroerr/anaconda3/bin/python pysoem_tset.py
+
    ```
 
 2. **The program will automatically**:
