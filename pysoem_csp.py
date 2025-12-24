@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-pysoem EtherCAT Slave Driver Example - CST Mode
-Reference implementation based on eRob_CST.cpp, following the C++ program flow exactly
-Demonstrates how to use the pysoem library to drive and control EtherCAT slave devices in CST (Cyclic Synchronous Torque) mode
+pysoem EtherCAT Slave Driver Example - CSP Mode
+Reference implementation based on eRob_CSP.cpp, following the C++ program flow exactly
+Demonstrates how to use the pysoem library to drive and control EtherCAT slave devices in CSP (Cyclic Synchronous Position) mode
 """
 
 import sys
@@ -245,7 +245,7 @@ def find_adapters():
 
 
 def scan_slaves(master):
-    """Scan and display all slave devices (Reference: C++ program eRob_CST.cpp STEP 1)"""
+    """Scan and display all slave devices (Reference: C++ program eRob_CSP.cpp STEP 1)"""
     print("\n__________STEP 1: Scan Slaves__________")
     
     # Configure initialization, scan slaves
@@ -261,7 +261,7 @@ def scan_slaves(master):
 
 
 def enter_preop_state(master):
-    """Enter PREOP state (Reference: C++ program eRob_CST.cpp STEP 2)"""
+    """Enter PREOP state (Reference: C++ program eRob_CSP.cpp STEP 2)"""
     print("\n__________STEP 2: Switch to PREOP State__________")
     
     # Check if slaves are ready for mapping (Reference: C++ ec_readstate())
@@ -346,11 +346,11 @@ def check_pdo_exists(slave, pdo_index):
 
 
 def configure_pdo_mapping(master):
-    """Configure PDO mapping (Reference: C++ program eRob_CST.cpp STEP 3)
-    Configure RXPDO (0x1600) and TXPDO (0x1A00) - CST mode
+    """Configure PDO mapping (Reference: C++ program eRob_CSP.cpp STEP 3)
+    Configure RXPDO (0x1600) and TXPDO (0x1A00) - CSP mode
     Note: Must be configured in PREOP state
     """
-    print("\n__________STEP 3: Configure PDO Mapping (CST Mode)__________")
+    print("\n__________STEP 3: Configure PDO Mapping (CSP Mode)__________")
     
     # Ensure slaves are in PREOP state (PDO mapping must be configured in PREOP state)
     master.read_state()
@@ -402,14 +402,14 @@ def configure_pdo_mapping(master):
                 print(f"  ⚠ Failed to add Control Word: {e}")
                 retval -= 1
             
-            # Target Torque (0x6071:0, 16 bits) -> 0x60710010
-            map_object = 0x60710010
+            # Target Position (0x607A:0, 32 bits) -> 0x607A0020
+            map_object = 0x607A0020
             try:
                 slave.sdo_write(0x1600, 0x02, map_object.to_bytes(4, 'little'))
                 time.sleep(0.05)
-                print(f"  ✓ Added Target Torque (0x6071:0, 16 bits)")
+                print(f"  ✓ Added Target Position (0x607A:0, 32 bits)")
             except Exception as e:
-                print(f"  ⚠ Failed to add Target Torque: {e}")
+                print(f"  ⚠ Failed to add Target Position: {e}")
                 retval -= 1
             
             # Mode of Operation (0x6060:0, 8 bits) -> 0x60600008
@@ -555,16 +555,7 @@ def configure_pdo_mapping(master):
                 print(f"  ⚠ Failed to set TXPDO assignment count: {e}")
                 retval -= 1
             
-            # Configure torque-related parameters (Reference: C++)
-            try:
-                positive_torque_limit = 0
-                negative_torque_limit = 0
-                slave.sdo_write(0x60E0, 0x00, positive_torque_limit.to_bytes(2, 'little', signed=True))
-                slave.sdo_write(0x60E1, 0x00, negative_torque_limit.to_bytes(2, 'little', signed=True))
-                time.sleep(0.05)
-                print(f"  ✓ Configured torque limit parameters")
-            except Exception as e:
-                print(f"  ⚠ Failed to configure torque limit parameters: {e}")
+            # CSP mode doesn't need torque limit configuration
             
         except Exception as e:
             print(f"  ⚠ PDO mapping configuration failed for slave {i}: {e}")
@@ -584,7 +575,7 @@ def configure_pdo_mapping(master):
 
 
 def configure_slaves(master):
-    """Configure slaves and perform data mapping (Reference: C++ program eRob_CST.cpp STEP 4)"""
+    """Configure slaves and perform data mapping (Reference: C++ program eRob_CSP.cpp STEP 4)"""
     print("\n__________STEP 4: Configure Slaves and Perform Data Mapping__________")
     
     # 设置手动状态转换（禁用自动状态转换）- 参考 C++ 的 ecx_context.manualstatechange = 1
@@ -839,11 +830,11 @@ _data_exchange_lock = threading.Lock()  # Lock to protect data exchange
 _data_exchange_cycle_count = 0
 # Thread output shared variables
 _thread_controlword = 0x0080  # Initially Fault Reset, then switch to 0x0006 after one cycle
-_thread_target_torque = 0
-_thread_mode_of_operation = 10  # CST
+_thread_target_position = 0  # Target position (32 bits for CSP mode)
+_thread_mode_of_operation = 8  # CSP
 
 def data_exchange_worker(master):
-    """Data exchange worker thread (Reference: C++ program eRob_CST.cpp ecatthread function)
+    """Data exchange worker thread (Reference: C++ program eRob_CSP.cpp ecatthread function)
     
     Key: This thread must continuously run in SAFEOP state, periodically sending valid Output PDO
     This is a prerequisite for slaves to enter OP (90% of issues are here)
@@ -860,11 +851,11 @@ def data_exchange_worker(master):
             try:
                 if hasattr(slave, 'output') and slave.output:
                     output_data = bytearray(slave.output)
-                    if len(output_data) >= 6:
+                    if len(output_data) >= 8:  # CSP mode: controlword(2) + target_position(4) + mode(1) + padding(1) = 8 bytes
                         output_data[0:2] = _thread_controlword.to_bytes(2, 'little')
-                        output_data[2:4] = _thread_target_torque.to_bytes(2, 'little', signed=True)
-                        output_data[4] = _thread_mode_of_operation
-                        output_data[5] = padding
+                        output_data[2:6] = _thread_target_position.to_bytes(4, 'little', signed=True)
+                        output_data[6] = _thread_mode_of_operation
+                        output_data[7] = padding
                         slave.output = bytes(output_data)
             except:
                 pass
@@ -873,7 +864,7 @@ def data_exchange_worker(master):
         wkc = master.receive_processdata(timeout=5000)
 
         # Note: Do not modify _thread_controlword here!
-        # Control word should be fully controlled by main thread state machine (cyclic_operation_cst)
+        # Control word should be fully controlled by main thread state machine (cyclic_operation_csp)
         # Thread only reads _thread_controlword and sends it, does not modify it
     
     # Continuously perform data exchange (Reference: C++ while(1) loop)
@@ -904,13 +895,13 @@ def data_exchange_worker(master):
                     try:
                         if hasattr(slave, 'output') and slave.output:
                             output_data = bytearray(slave.output)
-                            if len(output_data) >= 6:
-                                # Reference C++ structure rxpdo_t:
-                                # controlword(2) + target_torque(2) + mode_of_operation(1) + padding(1)
+                            if len(output_data) >= 8:
+                                # Reference C++ structure rxpdo_t for CSP mode:
+                                # controlword(2) + target_position(4) + mode_of_operation(1) + padding(1)
                                 output_data[0:2] = _thread_controlword.to_bytes(2, 'little')
-                                output_data[2:4] = _thread_target_torque.to_bytes(2, 'little', signed=True)
-                                output_data[4] = _thread_mode_of_operation
-                                output_data[5] = padding
+                                output_data[2:6] = _thread_target_position.to_bytes(4, 'little', signed=True)
+                                output_data[6] = _thread_mode_of_operation
+                                output_data[7] = padding
                                 slave.output = bytes(output_data)
                     except Exception as e:
                         # If error occurs, log but do not interrupt data exchange
@@ -939,22 +930,22 @@ def data_exchange_worker(master):
 
 
 def start_data_exchange_thread(master):
-    """Start data exchange thread (Reference: C++ program eRob_CST.cpp STEP 6)
+    """Start data exchange thread (Reference: C++ program eRob_CSP.cpp STEP 6)
     
     Key: Before entering OP, need to start a thread to continuously perform data exchange
     """
-    global _data_exchange_running, _data_exchange_thread, _data_exchange_cycle_count, _thread_controlword, _thread_target_torque
+    global _data_exchange_running, _data_exchange_thread, _data_exchange_cycle_count, _thread_controlword, _thread_target_position
     
     print("\n__________STEP 6: Start Data Exchange Thread__________")
     
     # Reset cycle count and output variables
     _data_exchange_cycle_count = 0
     # Note: Do not set _thread_controlword here!
-    # Control word should be fully controlled by state machine (cyclic_operation_cst)
+    # Control word should be fully controlled by state machine (cyclic_operation_csp)
     # If not yet set, use default value 0x0080 (Fault Reset)
     if _thread_controlword == 0:
         _thread_controlword = 0x0080  # Default starts from Fault Reset
-    _thread_target_torque = 0
+    _thread_target_position = 0
 
     # Reference C++: start_ecatthread_thread = TRUE
     _data_exchange_running = True
@@ -981,8 +972,8 @@ def stop_data_exchange_thread():
         _data_exchange_thread.join(timeout=1.0)
 
 
-def set_slaves_to_op_state_cst(master):
-    """Set all slaves to enter OP state (Reference: C++ program eRob_CST.cpp STEP 8)
+def set_slaves_to_op_state_csp(master):
+    """Set all slaves to enter OP state (Reference: C++ program eRob_CSP.cpp STEP 8)
     
     Key points (Reference: C++ code):
     1. Initialize PDO data (do not set operation mode, operation mode is set in STEP 9)
@@ -1112,13 +1103,13 @@ def set_slaves_to_op_state_cst(master):
     
     # Key: After entering OP, immediately set control word to 0x0080 (Fault Reset), start fault clear sequence
     # Reference C++ program STEP 8: rxpdo.controlword = 0x0080
-    # Must start sending 0x0080 immediately after entering OP, not wait until cyclic_operation_cst starts
+    # Must start sending 0x0080 immediately after entering OP, not wait until cyclic_operation_csp starts
     if result_state == pysoem.OP_STATE:
-        global _thread_controlword, _thread_target_torque, _thread_mode_of_operation
+        global _thread_controlword, _thread_target_position, _thread_mode_of_operation
         print("\n✓ After entering OP, immediately set control word to 0x0080 (Fault Reset) to start fault clearing...")
         _thread_controlword = 0x0080  # Immediately start fault clearing
-        _thread_target_torque = 0
-        _thread_mode_of_operation = 10  # CST mode
+        _thread_target_position = 0
+        _thread_mode_of_operation = 8  # CSP mode
         print("  ✓ Control word set to 0x0080, data exchange thread will immediately start sending fault clear command")
         # Wait several cycles, ensure fault clear command has been sent
         time.sleep(0.01)  # Wait 10ms, let thread send several times
@@ -1126,38 +1117,25 @@ def set_slaves_to_op_state_cst(master):
     return result_state == pysoem.OP_STATE
 
 
-def configure_cst_mode(master):
-    """Configure CST (Cyclic Synchronous Torque) mode (Reference: C++ program eRob_CST.cpp STEP 9)"""
-    print("\n__________STEP 9: Configure CST Mode__________")
+def configure_csp_mode(master):
+    """Configure CSP (Cyclic Synchronous Position) mode (Reference: C++ program eRob_CSP.cpp STEP 9)"""
+    print("\n__________STEP 9: Configure CSP Mode__________")
     
-    operation_mode = 10  # CST mode
-    max_torque = 100  # Maximum torque limit
-    torque_slope = 100  # Torque slope
+    operation_mode = 8  # CSP mode
     
     for i, slave in enumerate(master.slaves):
         try:
-            print(f"\nConfiguring slave {i} ({slave.name}) CST mode...")
+            print(f"\nConfiguring slave {i} ({slave.name}) CSP mode...")
             
             # Reference C++: First disable motor
             control_word = 0x0000
             slave.sdo_write(0x6040, 0x00, control_word.to_bytes(2, 'little'))
             time.sleep(0.1)
             
-            # Set operation mode to CST (Reference: C++)
+            # Set operation mode to CSP (Reference: C++)
             slave.sdo_write(0x6060, 0x00, operation_mode.to_bytes(1, 'little'))
             time.sleep(0.1)
-            print(f"  ✓ Operation mode set to CST (10)")
-            
-            # Set maximum torque limit (Reference: C++)
-            slave.sdo_write(0x6072, 0x00, max_torque.to_bytes(2, 'little', signed=True))
-            print(f"  ✓ Maximum torque limit: {max_torque}")
-            
-            # Set torque slope (Reference: C++)
-            try:
-                slave.sdo_write(0x6087, 0x00, torque_slope.to_bytes(2, 'little', signed=True))
-                print(f"  ✓ Torque slope: {torque_slope}")
-            except Exception as e:
-                print(f"  ⚠ Failed to set torque slope (may not be supported): {e}")
+            print(f"  ✓ Operation mode set to CSP (8)")
             
             time.sleep(0.1)
             
@@ -1167,20 +1145,20 @@ def configure_cst_mode(master):
                 mode_val = int.from_bytes(actual_mode, 'little')
                 print(f"  ✓ Verify operation mode: {mode_val} (Expected: {operation_mode})")
             
-            print(f"  ✓ Slave {i} CST mode configuration completed")
+            print(f"  ✓ Slave {i} CSP mode configuration completed")
             
         except Exception as e:
-            print(f"  ⚠ Slave {i} CST mode configuration failed: {e}")
+            print(f"  ⚠ Slave {i} CSP mode configuration failed: {e}")
             import traceback
             traceback.print_exc()
     
-    print("\n✓ All slaves CST mode configuration completed")
+    print("\n✓ All slaves CSP mode configuration completed")
 
 
-def cyclic_operation_cst(master, duration=300, timeout_us=5000, cycle_time_ms=None):
-    """Cyclic data exchange in CST mode (Reference: C++ program eRob_CST.cpp state machine control logic)
+def cyclic_operation_csp(master, duration=300, timeout_us=5000, cycle_time_ms=None):
+    """Cyclic data exchange in CSP mode (Reference: C++ program eRob_CSP.cpp state machine control logic)
     
-    Key: This function updates global variables _thread_controlword, _thread_target_torque, etc.,
+    Key: This function updates global variables _thread_controlword, _thread_target_position, etc.,
     and data_exchange_worker thread actually sends data (Reference: C++ ecatthread thread).
     
     Args:
@@ -1189,13 +1167,13 @@ def cyclic_operation_cst(master, duration=300, timeout_us=5000, cycle_time_ms=No
         timeout_us: Receive data timeout (microseconds)
         cycle_time_ms: Cycle time (milliseconds), if None then use global configuration ETHERCAT_CYCLE_TIME_MS
     """
-    global _thread_controlword, _thread_target_torque, _thread_mode_of_operation
+    global _thread_controlword, _thread_target_position, _thread_mode_of_operation
     
     # If cycle not specified, use global configuration
     if cycle_time_ms is None:
         cycle_time_ms = ETHERCAT_CYCLE_TIME_MS
     
-    print(f"\n__________Start CST Mode Cyclic Data Exchange__________")
+    print(f"\n__________Start CSP Mode Cyclic Data Exchange__________")
     print(f"Duration: {duration} seconds")
     print(f"State Machine Cycle: {cycle_time_ms} ms")
     print(f"Note: Actual data exchange is performed by data_exchange_worker thread ({ETHERCAT_CYCLE_TIME_MS} ms cycle)")
@@ -1247,19 +1225,19 @@ def cyclic_operation_cst(master, duration=300, timeout_us=5000, cycle_time_ms=No
     
     # Initialize global variables (Reference: C++ rxpdo.controlword = 0x0080)
     # Note: If fault detected, need to clear fault first
-    # Key: If 0x0080 is already set in set_slaves_to_op_state_cst, do not overwrite here
+    # Key: If 0x0080 is already set in set_slaves_to_op_state_csp, do not overwrite here
     # Check current control word, if already 0x0080, already clearing fault, do not reset
     if _thread_controlword != 0x0080:
         print("  Setting control word to 0x0080 (Fault Reset) to start fault clearing...")
         _thread_controlword = 0x0080  # Fault Reset
-        _thread_target_torque = 0
-        _thread_mode_of_operation = 10  # CST mode
+        _thread_target_position = 0
+        _thread_mode_of_operation = 8  # CSP mode
     else:
         print("  Control word is already 0x0080 (Fault Reset), continuing fault clear sequence...")
     
     # Key: After entering OP, wait for system to stabilize before starting enable sequence
     # At 1ms cycle, motor may need more time to respond, so wait first
-    # Note: Enable sequence already set 0x0080 in set_slaves_to_op_state_cst, thread is already sending
+    # Note: Enable sequence already set 0x0080 in set_slaves_to_op_state_csp, thread is already sending
     # Wait here to let system stabilize, then start complete state machine sequence
     print("\nWaiting for system to stabilize (after entering OP, give motor some time to prepare)...")
     # Adjust wait time based on cycle time: wait longer at 1ms cycle, can be shorter at 2ms cycle
@@ -1271,6 +1249,7 @@ def cyclic_operation_cst(master, duration=300, timeout_us=5000, cycle_time_ms=No
     step = 0  # State machine step (Reference: C++ int step = 0)
     print_count = 0  # For controlling print frequency
     fault_cleared = False  # Whether fault has been cleared
+    switch_on_enabled = False  # Whether Bit 6 (Switch on disabled) has been cleared
     
     try:
         # Reference C++ state machine logic (in ecatthread)
@@ -1293,60 +1272,192 @@ def cyclic_operation_cst(master, duration=300, timeout_us=5000, cycle_time_ms=No
             except:
                 pass
             
-            # Fault clear stage: Need longer time to ensure fault is cleared
-            # If non-critical error (e.g., low battery voltage), can shorten fault clear time
-            # Key: Adjust duration based on cycle time
-            # At 1ms cycle, need more steps to achieve same time (e.g., 4000 steps = 4 seconds)
-            # At 2ms cycle, need fewer steps to achieve same time (e.g., 2000 steps = 4 seconds)
-            base_duration_ms = 4000  # Base duration (milliseconds)
-            base_duration_steps = int(base_duration_ms / ETHERCAT_CYCLE_TIME_MS)  # Calculate step count based on cycle
+            # State machine control logic (Reference: C++ step <= 4000, 6000, 8000, 10000)
+            # Key: Use absolute step counts, not relative offsets
+            # C++ code uses: step <= 4000, step <= 6000, step <= 8000, step <= 10000
+            # These are absolute step counts from the beginning, not relative to fault_reset_duration
+            # Calculate step counts based on cycle time (C++ uses 1ms cycle, so 4000 steps = 4 seconds)
+            step_4000_base = int(4000 / ETHERCAT_CYCLE_TIME_MS)  # Fault Reset stage (4 seconds)
+            step_6000 = int(6000 / ETHERCAT_CYCLE_TIME_MS)  # Shutdown stage (6 seconds from start)
+            step_8000 = int(8000 / ETHERCAT_CYCLE_TIME_MS)  # Switch On stage (8 seconds from start)
+            step_10000 = int(10000 / ETHERCAT_CYCLE_TIME_MS)  # Enable Operation stage (10 seconds from start)
             
-            fault_reset_duration = int(base_duration_steps * 0.5) if has_non_critical_error else base_duration_steps
+            # If Bit 6 (Switch on disabled) is still set, extend fault reset duration
+            # This helps clear Bit 6 which may take longer than normal fault clearing
+            # IMPORTANT: Ensure step_4000 never exceeds step_6000 to avoid skipping 0x0006 stage
+            step_4000 = step_4000_base
+            if current_statusword is not None and (current_statusword & 0x0040):
+                if not switch_on_enabled and step > step_4000_base * 0.9:
+                    # Extend fault reset, but ensure it doesn't exceed step_6000
+                    # This ensures 0x0006 (Shutdown) stage is never skipped
+                    step_4000_extended = int(step_4000_base * 1.5)
+                    step_4000 = min(step_4000_extended, step_6000 - 1)  # Ensure at least 1 step for 0x0006
+                    if step == int(step_4000_base * 0.9) + 1:
+                        print(f"⚠ Bit 6 (Switch on disabled) still set, extending fault reset duration to {step_4000 * ETHERCAT_CYCLE_TIME_MS / 1000:.1f} seconds")
+                        print(f"  (Limited to ensure 0x0006 stage is not skipped)")
             
-            # State machine control logic (Reference: C++ step <= 4000, 5300, 6000, 7000)
-            # Key: Must be based on offset of fault_reset_duration, ensure sequential execution
             # Debug: Record step value before state machine judgment
             prev_controlword = _thread_controlword
             
-            if step <= fault_reset_duration:
+            if step <= step_4000:
                 # 0x0080: Fault Reset (Reference: C++ step <= 4000)
                 _thread_controlword = 0x0080
-                _thread_target_torque = 0
+                _thread_target_position = 0
                 
-                # Check if fault has been cleared
+                # Check if fault has been cleared and Bit 6 (Switch on disabled) is cleared
                 if current_statusword is not None:
-                    if not (current_statusword & 0x0008):  # Fault bit cleared
+                    switch_on_disabled = bool(current_statusword & 0x0040)  # Bit 6
+                    fault_bit = bool(current_statusword & 0x0008)  # Bit 3
+                    
+                    if not fault_bit and not switch_on_disabled:
                         if not fault_cleared:
-                            print(f"✓ Fault cleared (Status Word: 0x{current_statusword:04x})")
+                            print(f"✓ Fault cleared and Switch on enabled (Status Word: 0x{current_statusword:04x})")
                             fault_cleared = True
-                    elif has_non_critical_error and step > fault_reset_duration * 0.5:
+                            switch_on_enabled = True
+                    elif not switch_on_disabled:
+                        # Bit 6 cleared but fault may still be set
+                        if not switch_on_enabled:
+                            print(f"✓ Switch on enabled (Bit 6 cleared) (Status Word: 0x{current_statusword:04x})")
+                            switch_on_enabled = True
+                    elif switch_on_disabled and step > step_4000 * 0.8:
+                        # If Bit 6 is still set after 80% of fault reset duration, check Error Code
+                        if print_count == 0:  # Print only once per 100 cycles
+                            try:
+                                with _data_exchange_lock:
+                                    error_code_data = master.slaves[0].sdo_read(0x603F, 0x00, 2)
+                                    if error_code_data:
+                                        error_code = int.from_bytes(error_code_data, 'little')
+                                        if error_code != 0:
+                                            print(f"⚠ Error Code (0x603F): 0x{error_code:04x} - This may prevent enabling")
+                            except:
+                                pass
+                            print(f"⚠ Warning: Bit 6 (Switch on disabled) still set after {step} steps (Status Word: 0x{current_statusword:04x})")
+                            print(f"  Status Word bits: Fault={fault_bit}, SwitchOnDisabled={switch_on_disabled}, VoltageEnabled={bool(current_statusword & 0x0010)}")
+                    elif has_non_critical_error and step > step_4000 * 0.5:
                         # For non-critical errors, continue enable sequence even if fault bit not cleared
                         if not fault_cleared:
                             print(f"ℹ Non-critical error detected, will continue enable sequence even if fault bit not cleared (Status Word: 0x{current_statusword:04x})")
                             fault_cleared = True  # Mark as processed, continue enable sequence
-            elif step <= fault_reset_duration + int(1000 / ETHERCAT_CYCLE_TIME_MS):  # Shutdown stage: +1000ms
-                # 0x0006: Shutdown (Reference: C++ step <= 5300, but using offset here)
+            elif step <= step_6000:
+                # 0x0006: Shutdown (Reference: C++ step <= 6000)
                 _thread_controlword = 0x0006
-                _thread_target_torque = 0
-            elif step <= fault_reset_duration + int(2000 / ETHERCAT_CYCLE_TIME_MS):  # Switch On stage: +2000ms
-                # 0x0007: Switch On (Reference: C++ step <= 6000, but using offset here)
+                # Read actual position and set target to current position (keep position)
+                try:
+                    with _data_exchange_lock:
+                        if hasattr(master.slaves[0], 'input') and master.slaves[0].input and len(master.slaves[0].input) >= 6:
+                            actual_pos = int.from_bytes(master.slaves[0].input[2:6], 'little', signed=True)
+                            _thread_target_position = actual_pos
+                            # Check Status Word for errors during Shutdown stage
+                            if current_statusword is not None:
+                                switch_on_disabled = bool(current_statusword & 0x0040)  # Bit 6
+                                fault_bit = bool(current_statusword & 0x0008)  # Bit 3
+                                ready_to_switch_on = bool(current_statusword & 0x0001)  # Bit 0
+                                
+                                if switch_on_disabled and print_count == 0:
+                                    print(f"⚠ Warning: Bit 6 (Switch on disabled) still set during Shutdown (Status Word: 0x{current_statusword:04x})")
+                                    print(f"  Ready to switch on: {ready_to_switch_on}, Fault: {fault_bit}")
+                                elif fault_bit and print_count == 0:
+                                    print(f"⚠ Warning: Fault bit still set during Shutdown stage (Status Word: 0x{current_statusword:04x})")
+                except:
+                    _thread_target_position = 0
+            elif step <= step_8000:
+                # 0x0007: Switch On (Reference: C++ step <= 8000)
                 _thread_controlword = 0x0007
-                _thread_target_torque = 0
-            elif step <= fault_reset_duration + int(3000 / ETHERCAT_CYCLE_TIME_MS):  # Enable Operation stage: +3000ms
-                # 0x000F: Enable Operation (Reference: C++ step <= 7000, but using offset here)
+                # Read actual position and set target to current position (keep position)
+                try:
+                    with _data_exchange_lock:
+                        if hasattr(master.slaves[0], 'input') and master.slaves[0].input and len(master.slaves[0].input) >= 6:
+                            actual_pos = int.from_bytes(master.slaves[0].input[2:6], 'little', signed=True)
+                            _thread_target_position = actual_pos
+                            # Check Status Word for errors during Switch On stage
+                            if current_statusword is not None:
+                                switch_on_disabled = bool(current_statusword & 0x0040)  # Bit 6
+                                fault_bit = bool(current_statusword & 0x0008)  # Bit 3
+                                ready_to_switch_on = bool(current_statusword & 0x0001)  # Bit 0
+                                voltage_enabled = bool(current_statusword & 0x0010)  # Bit 4
+                                
+                                if switch_on_disabled and print_count == 0:
+                                    print(f"⚠ Warning: Bit 6 (Switch on disabled) still set during Switch On (Status Word: 0x{current_statusword:04x})")
+                                    print(f"  Ready to switch on: {ready_to_switch_on}, Voltage enabled: {voltage_enabled}, Fault: {fault_bit}")
+                                    # Try to read Error Code
+                                    try:
+                                        error_code_data = master.slaves[0].sdo_read(0x603F, 0x00, 2)
+                                        if error_code_data:
+                                            error_code = int.from_bytes(error_code_data, 'little')
+                                            if error_code != 0:
+                                                print(f"  Error Code (0x603F): 0x{error_code:04x}")
+                                    except:
+                                        pass
+                                elif fault_bit and print_count == 0:
+                                    print(f"⚠ Warning: Fault bit set during Switch On stage (Status Word: 0x{current_statusword:04x})")
+                                elif not ready_to_switch_on and print_count == 0:
+                                    print(f"⚠ Warning: Not ready to switch on (Status Word: 0x{current_statusword:04x})")
+                                    print(f"  Bit 6 (Switch on disabled): {switch_on_disabled}, Bit 4 (Voltage enabled): {voltage_enabled}")
+                except:
+                    _thread_target_position = 0
+            elif step <= step_10000:
+                # 0x000F: Enable Operation (Reference: C++ step <= 10000)
                 _thread_controlword = 0x000F
-                _thread_target_torque = 0
+                # Read actual position and set target to current position (keep position)
+                try:
+                    with _data_exchange_lock:
+                        if hasattr(master.slaves[0], 'input') and master.slaves[0].input and len(master.slaves[0].input) >= 6:
+                            actual_pos = int.from_bytes(master.slaves[0].input[2:6], 'little', signed=True)
+                            _thread_target_position = actual_pos
+                            # Check Status Word for errors during Enable Operation stage
+                            if current_statusword is not None:
+                                if (current_statusword & 0x0008):
+                                    if print_count == 0:  # Print only once per 100 cycles
+                                        print(f"⚠ Warning: Fault bit set during Enable Operation stage (Status Word: 0x{current_statusword:04x})")
+                                elif not (current_statusword & 0x0004):  # Bit 2: Operation enabled
+                                    if print_count == 0:  # Print only once per 100 cycles
+                                        print(f"⚠ Warning: Operation not enabled (Status Word: 0x{current_statusword:04x}, expected bit 2 to be set)")
+                except:
+                    _thread_target_position = 0
             else:
-                # 0x000F: Enable Operation + Target Torque (Reference: C++ else)
-                # When step > fault_reset_duration + 3000, enter normal operation state
+                # 0x000F: Enable Operation + Target Position (Reference: C++ else)
+                # When step > step_10000, enter normal operation state
+                # Set target position = actual position + 20 (Reference: C++ rxpdo.target_position = txpdo.actual_position + 20)
                 _thread_controlword = 0x000F
-                _thread_target_torque = 50  # Set target torque (Reference: C++ 50, currently set to 0 for testing)
+                try:
+                    with _data_exchange_lock:
+                        if hasattr(master.slaves[0], 'input') and master.slaves[0].input and len(master.slaves[0].input) >= 6:
+                            actual_pos = int.from_bytes(master.slaves[0].input[2:6], 'little', signed=True)
+                            # IMPORTANT: Set target position = actual position + 20 (not equal to actual position!)
+                            _thread_target_position = actual_pos + 20  # Target position = current position + 20
+                            # Debug: Print when entering normal operation mode (only once)
+                            if step == step_10000 + 1:
+                                print(f"\n>>> Entered Normal Operation Mode: step={step} (threshold={step_10000})")
+                                print(f"    actual_pos={actual_pos}, target_pos={_thread_target_position} (should be actual + 20)")
+                except Exception as e:
+                    _thread_target_position = 0
+                    if step == step_10000 + 1:
+                        print(f"⚠ Error reading position in normal operation mode: {e}")
+                    import traceback
+                    traceback.print_exc()
             
-            # Debug: If control word changes unexpectedly, print warning
-            if prev_controlword != _thread_controlword and print_count == 0:
-                print(f"DEBUG: step={step}, control word changed from 0x{prev_controlword:04x} to 0x{_thread_controlword:04x}")
+            # Debug: If control word changes, print detailed status
+            if prev_controlword != _thread_controlword:
+                if print_count == 0:  # Print immediately when control word changes
+                    try:
+                        with _data_exchange_lock:
+                            if hasattr(master.slaves[0], 'input') and master.slaves[0].input and len(master.slaves[0].input) >= 12:
+                                statusword = int.from_bytes(master.slaves[0].input[0:2], 'little')
+                                actual_position = int.from_bytes(master.slaves[0].input[2:6], 'little', signed=True)
+                                print(f"\n>>> State Transition: step={step}, CW: 0x{prev_controlword:04x} -> 0x{_thread_controlword:04x}")
+                                print(f"    Status Word: 0x{statusword:04x}")
+                                print(f"      Bit 0 (Ready to switch on): {bool(statusword & 0x0001)}")
+                                print(f"      Bit 1 (Switched on): {bool(statusword & 0x0002)}")
+                                print(f"      Bit 2 (Operation enabled): {bool(statusword & 0x0004)}")
+                                print(f"      Bit 3 (Fault): {bool(statusword & 0x0008)}")
+                                print(f"      Bit 4 (Voltage enabled): {bool(statusword & 0x0010)}")
+                                print(f"      Bit 5 (Quick stop): {bool(statusword & 0x0020)}")
+                                print(f"      Bit 6 (Switch on disabled): {bool(statusword & 0x0040)}")
+                                print(f"    Actual Position: {actual_position}")
+                    except:
+                        print(f"\n>>> State Transition: step={step}, CW: 0x{prev_controlword:04x} -> 0x{_thread_controlword:04x}")
             
-            _thread_mode_of_operation = 10  # CST mode (Reference: C++ rxpdo.mode_of_operation = 10)
+            _thread_mode_of_operation = 8  # CSP mode (Reference: C++ rxpdo.mode_of_operation = 8)
             
             # Print status every 100 cycles (Reference: C++ dorun % 100 == 0)
             # Note: Read slave data through lock here to avoid conflict with thread
@@ -1364,12 +1475,12 @@ def cyclic_operation_cst(master, duration=300, timeout_us=5000, cycle_time_ms=No
                             
                             # Read actually sent PDO data (verify if sent correctly)
                             sent_controlword = None
-                            sent_target_torque = None
+                            sent_target_position = None
                             sent_mode = None
-                            if hasattr(master.slaves[0], 'output') and master.slaves[0].output and len(master.slaves[0].output) >= 6:
+                            if hasattr(master.slaves[0], 'output') and master.slaves[0].output and len(master.slaves[0].output) >= 8:
                                 sent_controlword = int.from_bytes(master.slaves[0].output[0:2], 'little')
-                                sent_target_torque = int.from_bytes(master.slaves[0].output[2:4], 'little', signed=True)
-                                sent_mode = master.slaves[0].output[4]
+                                sent_target_position = int.from_bytes(master.slaves[0].output[2:6], 'little', signed=True)
+                                sent_mode = master.slaves[0].output[6]
                             
                             # Parse key bits of Status Word
                             fault_bit = bool(statusword & 0x0008)
@@ -1388,18 +1499,26 @@ def cyclic_operation_cst(master, duration=300, timeout_us=5000, cycle_time_ms=No
                                 status_info += " [READY]"
                             
                             # Print sent PDO and received status (Reference: C++ print format)
-                            # C++: printf("Status: SW=0x%04x, pos=%d, vel=%d, target_torque=%d, mode=%d\n", ...)
-                            if sent_controlword is not None:
-                                print(f"TX: CW=0x{sent_controlword:04x} TQ={sent_target_torque:4d} MODE={sent_mode:2d} | RX: {status_info}, pos={actual_position:8d}, vel={actual_velocity:6d}, torque={actual_torque:4d}, step={step}")
+                            # C++: printf("Status: SW=0x%04x, pos=%d, vel=%d, target_pos=%d, mode=%d\n", ...)
+                            # Calculate step thresholds for display
+                            step_10000_display = int(10000 / ETHERCAT_CYCLE_TIME_MS)
+                            if step > step_10000_display:
+                                # Normal operation mode - target should be actual + 20
+                                mode_indicator = "[NORMAL]"
                             else:
-                                print(f"TX: CW=0x{_thread_controlword:04x} TQ={_thread_target_torque:4d} MODE={_thread_mode_of_operation:2d} | RX: {status_info}, pos={actual_position:8d}, vel={actual_velocity:6d}, torque={actual_torque:4d}, step={step}")
+                                # Enable sequence mode - target equals actual
+                                mode_indicator = "[ENABLE]"
+                            
+                            if sent_controlword is not None:
+                                print(f"TX: CW=0x{sent_controlword:04x} TP={sent_target_position:8d} MODE={sent_mode:2d} {mode_indicator} | RX: {status_info}, pos={actual_position:8d}, vel={actual_velocity:6d}, torque={actual_torque:4d}, step={step}/{step_10000_display}")
+                            else:
+                                print(f"TX: CW=0x{_thread_controlword:04x} TP={_thread_target_position:8d} MODE={_thread_mode_of_operation:2d} {mode_indicator} | RX: {status_info}, pos={actual_position:8d}, vel={actual_velocity:6d}, torque={actual_torque:4d}, step={step}/{step_10000_display}")
                 except Exception as e:
                     pass  # Ignore read errors, continue running
             
-            # Control state machine update frequency (Reference: C++ increment when step < 8000)
+            # Control state machine update frequency (Reference: C++ increment when step < 12000)
             # Use unified cycle configuration
-            # Note: Due to extended stage times, step upper limit also increased accordingly
-            if step < 25000:  # Increase upper limit to match extended stages
+            if step < 12000:  # Reference: C++ step < 12000
                 step += 1
             
             # Wait one cycle (use unified cycle configuration)
@@ -1422,7 +1541,7 @@ def cyclic_operation_cst(master, duration=300, timeout_us=5000, cycle_time_ms=No
     print(f"  Running time: {elapsed_time:.2f} seconds")
     print(f"  Final state machine step: {step}")
     print(f"  Final control word: 0x{_thread_controlword:04x}")
-    print(f"  Final target torque: {_thread_target_torque}")
+    print(f"  Final target position: {_thread_target_position}")
 
 
 def cyclic_operation(master, duration=10, timeout_us=5000):
@@ -1676,21 +1795,21 @@ def main():
             master.close()
             return
         
-        # 9. Start data exchange (Reference: C++ program eRob_CST.cpp STEP 6)
+        # 9. Start data exchange (Reference: C++ program eRob_CSP.cpp STEP 6)
         # Key: Before entering OP, need to continuously perform data exchange
         start_data_exchange_thread(master)
         
-        # 10. Set slaves to enter OP state (Reference: C++ program eRob_CST.cpp STEP 8)
-        set_slaves_to_op_state_cst(master)
+        # 10. Set slaves to enter OP state (Reference: C++ program eRob_CSP.cpp STEP 8)
+        set_slaves_to_op_state_csp(master)
         
-        # 10. Configure CST mode (Reference: C++ program eRob_CST.cpp STEP 9, configure in OP state)
-        configure_cst_mode(master)
+        # 10. Configure CSP mode (Reference: C++ program eRob_CSP.cpp STEP 9, configure in OP state)
+        configure_csp_mode(master)
         
-        # 11. Execute CST mode cyclic data exchange (duration increased, default 300 seconds)
+        # 11. Execute CSP mode cyclic data exchange (duration increased, default 300 seconds)
         # Note: If timeout occurs (WKC=-1), can increase timeout_us parameter
-        # Note: Data exchange thread is already running, cyclic_operation_cst will take over data exchange
+        # Note: Data exchange thread is already running, cyclic_operation_csp will take over data exchange
         # Use global cycle configuration (do not pass cycle_time_ms parameter, use default global configuration)
-        cyclic_operation_cst(master, duration=300, timeout_us=5000)
+        cyclic_operation_csp(master, duration=300, timeout_us=5000)
         
         # 12. Stop data exchange thread
         stop_data_exchange_thread()
